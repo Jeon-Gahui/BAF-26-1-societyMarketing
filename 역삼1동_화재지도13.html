@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>역삼1동 화재 및 소방시설 통합 지도</title>
+  <!-- 카카오 API: visualization 라이브러리 반드시 포함 -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer,visualization&autoload=false"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Malgun Gothic',sans-serif;display:flex;flex-direction:column;height:100vh;background:#f8f9fa;}
+    
+    #header-info{padding:10px 20px;display:flex;justify-content:flex-end;position:absolute;top:10px;right:10px;z-index:100;pointer-events:none;}
+    #badge{background:rgba(0,0,0,0.8);color:#fff;padding:6px 14px;border-radius:20px;font-size:12px;pointer-events:auto;}
+
+    #controls{background:#fff;padding:12px 20px;display:flex;gap:15px;border-bottom:1px solid #ddd;z-index:50;}
+    .ctrl-group{display:flex;align-items:center;gap:8px;font-size:13px;}
+    select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;font-size:13px;}
+
+    /* 클로드 수정사항 2번 반영: 레이아웃 문제 해결 */
+    #map-wrap { flex: 1; position: relative; width: 100%; }
+    #map { position: absolute; inset: 0; z-index: 1; }
+
+    #panel{position:absolute;bottom:30px;right:20px;background:#fff;padding:20px;border-radius:15px;box-shadow:0 10px 30px rgba(0,0,0,0.2);display:none;z-index:1000;min-width:300px;border:1px solid #f0f0f0;}
+    .info-row{display:flex;justify-content:space-between;border-bottom:1px solid #f9f9f9;padding:6px 0;}
+    .dong-info{margin-top:15px; padding-top:12px; border-top:1px dashed #eee; font-weight:bold; color:#2980b9; text-align:right;}
+  </style>
+</head>
+<body>
+
+<div id="header-info"><span id="badge">지도 로딩 중...</span></div>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <label>데이터 선택</label>
+    <select id="mainMode">
+      <option value="FIRE">🔥 화재 발생 데이터</option>
+      <option value="WATER">💧 소방용수시설</option>
+    </select>
+  </div>
+  <div class="ctrl-group">
+    <label>밀도(열지도)</label>
+    <input type="checkbox" id="heatmapT">
+  </div>
+</div>
+
+<div id="map-wrap">
+  <div id="map"></div>
+</div>
+
+<div id="panel">
+  <h3 id="p-title" style="margin-bottom:15px; color:#e74c3c;">📍 상세 정보</h3>
+  <div id="p-content"></div>
+  <div class="dong-info">행정동: <span id="p-dong">역삼1동</span></div>
+  <button style="width:100%; margin-top:10px; padding:10px; cursor:pointer;" onclick="document.getElementById('panel').style.display='none'">닫기</button>
+</div>
+
+<script>
+// 클로드 수정사항 1번 반영: 화재 데이터 직접 내장 (523건 예시)
+// 실제 데이터를 아래 배열 안에 [ {lat: 37..., lng: 127...}, ... ] 형식으로 넣으세요.
+const FIRE_DATA_INTERNAL = [
+  {"OCRN_YMD":20240101, "FIRE_TYPE_NM":"건축물", "DAMG_RGN_LAT":37.5006, "DAMG_RGN_LOT":127.0369, "FCLT_PLC_MCLSF_NM":"빌딩"},
+  // ... 나머지 523건 데이터 ...
+];
+
+let WATER_DATA = [], markers = [], map, clusterer, heatmap;
+
+kakao.maps.load(function() {
+  const container = document.getElementById('map');
+  map = new kakao.maps.Map(container, {
+    center: new kakao.maps.LatLng(37.4996, 127.0354),
+    level: 4
+  });
+  
+  clusterer = new kakao.maps.MarkerClusterer({ map: map, averageCenter: true, minLevel: 3 });
+  
+  // 열지도 초기화
+  heatmap = new kakao.maps.visualization.Heatmap({
+    map: map,
+    radius: 30,
+    opacity: 0.7
+  });
+  
+  loadWaterData();
+});
+
+async function loadWaterData() {
+  try {
+    // 소방용수시설 데이터 로드 (파일 경로 및 이름 정확히 확인 필요)
+    const response = await fetch('yeoksam_fire_water.csv');
+    const csvText = await response.text();
+    Papa.parse(csvText, {
+      header: true, dynamicTyping: true, skipEmptyLines: true,
+      complete: function(results) {
+        WATER_DATA = results.data.filter(d => d.위도);
+        render();
+      }
+    });
+  } catch (e) {
+    console.error("소방용수 데이터 로드 실패");
+    render(); // 화재 데이터만이라도 띄우기 위해
+  }
+}
+
+document.getElementById('mainMode').addEventListener('change', render);
+document.getElementById('heatmapT').addEventListener('change', render);
+
+function render() {
+  if (!map) return;
+  const mode = document.getElementById('mainMode').value;
+  const showHeatmap = document.getElementById('heatmapT').checked;
+  
+  clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+
+  let displayData = (mode === 'FIRE') ? FIRE_DATA_INTERNAL : WATER_DATA;
+  document.getElementById('badge').innerHTML = `분석 결과: <strong>${displayData.length}</strong>건`;
+
+  // 클로드 수정사항 3번 반영: 열지도 데이터 형식 오류 수정
+  if (showHeatmap) {
+    const points = displayData.map(d => {
+      const lat = mode === 'FIRE' ? d.DAMG_RGN_LAT : d.위도;
+      const lng = mode === 'FIRE' ? d.DAMG_RGN_LOT : d.경도;
+      return new kakao.maps.LatLng(lat, lng);
+    });
+    heatmap.setData({ max: 20, data: points }); // Kakao Visualization 규격 준수
+    heatmap.setMap(map);
+  } else {
+    heatmap.setMap(null);
+  }
+
+  // 마커 생성
+  displayData.forEach(d => {
+    const lat = mode === 'FIRE' ? d.DAMG_RGN_LAT : d.위도;
+    const lng = mode === 'FIRE' ? d.DAMG_RGN_LOT : d.경도;
+    const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(lat, lng) });
+    
+    kakao.maps.event.addListener(marker, 'click', () => {
+      document.getElementById('panel').style.display = 'block';
+      document.getElementById('p-content').innerHTML = mode === 'FIRE' ? 
+        `<div class="info-row"><span>유형</span><span>${d.FIRE_TYPE_NM}</span></div>` : 
+        `<div class="info-row"><span>시설명</span><span>${d.시설번호}</span></div>`;
+    });
+    markers.push(marker);
+    if (!showHeatmap) marker.setMap(map);
+  });
+  clusterer.addMarkers(markers);
+}
+</script>
+</body>
+</html>
