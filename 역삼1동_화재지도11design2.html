@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>역삼1동 데이터 분석 지도</title>
+  
+  <!-- Claude 스타일 폰트 로드 -->
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- 카카오 API: visualization 라이브러리 및 autoload=false 필수 -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer,visualization&autoload=false"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <style>
+    :root {
+      --color-canvas: #faf9f5;
+      --color-primary: #cc785c;
+      --color-primary-active: #a9583e;
+      --color-ink: #141413;
+      --color-body: #3d3d3a;
+      --color-surface-card: #efe9de;
+      --color-hairline: #e6dfd8;
+      --font-display: 'Cormorant Garamond', serif;
+      --font-body: 'Inter', sans-serif;
+    }
+
+    *{margin:0;padding:0;box-sizing:border-box;}
+    html, body { height: 100%; width: 100%; }
+    
+    body{
+      font-family: var(--font-body);
+      background-color: var(--color-canvas);
+      color: var(--color-body);
+      display: flex;
+      flex-direction: column;
+    }
+    
+    /* 상단 배지 */
+    #header-info {
+      padding: 16px 24px;
+      display: flex;
+      justify-content: flex-end;
+      position: absolute;
+      top: 0;
+      right: 0;
+      z-index: 20;
+      pointer-events: none;
+    }
+    #badge {
+      background: var(--color-ink);
+      color: var(--color-canvas);
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      pointer-events: auto;
+    }
+
+    /* 컨트롤바 디자인 */
+    #controls {
+      background: var(--color-canvas);
+      padding: 12px 32px;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      border-bottom: 1px solid var(--color-hairline);
+      z-index: 15;
+      flex-shrink: 0;
+    }
+    .ctrl-group { display: flex; align-items: center; gap: 8px; }
+    .ctrl-group label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--color-body);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    select {
+      border: 1px solid var(--color-hairline);
+      background: #fff;
+      border-radius: 8px;
+      padding: 5px 12px;
+      font-size: 13px;
+      outline: none;
+      color: var(--color-ink);
+    }
+
+    /* 지도가 보이지 않는 문제를 위해 높이를 명시적으로 설정 */
+    #map-container {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* 상세 정보 패널 (오른쪽 하단) */
+    #panel {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      background: var(--color-surface-card);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(20,20,19,0.08);
+      display: none;
+      z-index: 100;
+      width: 320px;
+      border: 1px solid var(--color-hairline);
+    }
+    #p-title {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      color: var(--color-ink);
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--color-hairline);
+      padding-bottom: 8px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      font-size: 14px;
+    }
+    .info-label { color: #8e8b82; font-weight: 500; }
+    .info-value { color: var(--color-ink); font-weight: 500; text-align: right; }
+    
+    .dong-info {
+      margin-top: 16px;
+      text-align: right;
+      font-size: 12px;
+      color: var(--color-primary);
+      font-weight: 500;
+      letter-spacing: 0.05em;
+    }
+    
+    .btn-close {
+      width: 100%;
+      padding: 10px;
+      background: var(--color-primary);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      color: #fff;
+      font-weight: 500;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="header-info"><span id="badge">LOADING DATA...</span></div>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <label>Mode</label>
+    <select id="mainMode">
+      <option value="FIRE">🔥 화재 발생</option>
+      <option value="WATER">💧 소방용수시설</option>
+    </select>
+  </div>
+  <div id="waterFilters" class="ctrl-group" style="display:none;">
+    <label>Type</label>
+    <select id="typeFilter">
+      <option value="전체">전체 유형</option>
+      <option value="1">지상식 소화전</option>
+      <option value="2">지하식 소화전</option>
+      <option value="3">급수탑</option>
+      <option value="4">저수조</option>
+      <option value="5">비상소화장치</option>
+    </select>
+  </div>
+  <div id="fireFilters" class="ctrl-group">
+    <label>Year</label>
+    <select id="yearFilter">
+      <option value="전체">전체 연도</option>
+      <option value="2024">2024년</option>
+      <option value="2023">2023년</option>
+    </select>
+  </div>
+</div>
+
+<div id="map-container">
+  <div id="map"></div>
+</div>
+
+<div id="panel">
+  <h3 id="p-title">상세 정보</h3>
+  <div id="p-content"></div>
+  <div class="dong-info">REGION: <span id="p-dong">-</span></div>
+  <button class="btn-close" onclick="document.getElementById('panel').style.display='none'">CLOSE</button>
+</div>
+
+<script>
+let FIRE_DATA = [], WATER_DATA = [], map, clusterer, markers = [];
+
+const WATER_TYPE_NAMES = { "1": "지상식 소화전", "2": "지하식 소화전", "3": "급수탑", "4": "저수조", "5": "비상소화장치" };
+
+// 1. 카카오맵 초기화 및 데이터 로드 시작
+kakao.maps.load(function() {
+  const container = document.getElementById('map');
+  const options = { center: new kakao.maps.LatLng(37.4996, 127.0354), level: 4 };
+  map = new kakao.maps.Map(container, options);
+  
+  clusterer = new kakao.maps.MarkerClusterer({
+    map: map, averageCenter: true, minLevel: 3,
+    styles: [{ width: '40px', height: '40px', background: '#cc785c', borderRadius: '20px', color: '#fff', textAlign: 'center', lineHeight: '40px', fontWeight: '500' }]
+  });
+
+  loadAllData();
+});
+
+async function loadAllData() {
+  const badge = document.getElementById('badge');
+  try {
+    // 화재 데이터 로드
+    Papa.parse("역삼1동_화재출동.csv", {
+      download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+      complete: function(res) {
+        FIRE_DATA = res.data.filter(d => d.DAMG_RGN_LAT && d.DAMG_RGN_LOT);
+        renderMarkers();
+      }
+    });
+    // 소방용수 데이터 로드
+    const waterRes = await fetch("yeoksam_fire_water.csv");
+    const waterCsv = await waterRes.text();
+    Papa.parse(waterCsv, {
+      header: true, dynamicTyping: true, skipEmptyLines: true,
+      complete: function(res) {
+        WATER_DATA = res.data.filter(d => d.위도 && d.경도);
+        renderMarkers();
+      }
+    });
+  } catch (e) {
+    badge.textContent = "DATA LOAD ERROR";
+  }
+}
+
+// 2. 필터링 및 렌더링
+document.getElementById('mainMode').addEventListener('change', function() {
+  const isWater = this.value === 'WATER';
+  document.getElementById('waterFilters').style.display = isWater ? 'flex' : 'none';
+  document.getElementById('fireFilters').style.display = isWater ? 'none' : 'flex';
+  renderMarkers();
+});
+document.getElementById('typeFilter').addEventListener('change', renderMarkers);
+document.getElementById('yearFilter').addEventListener('change', renderMarkers);
+
+function renderMarkers() {
+  if (!map) return;
+  const mode = document.getElementById('mainMode').value;
+  clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+
+  let filtered = [];
+  if (mode === 'FIRE') {
+    const year = document.getElementById('yearFilter').value;
+    filtered = FIRE_DATA.filter(d => year === '전체' || String(d.OCRN_YMD).startsWith(year));
+  } else {
+    const type = document.getElementById('typeFilter').value;
+    filtered = WATER_DATA.filter(d => type === '전체' || String(d.시설유형코드) === type);
+  }
+
+  document.getElementById('badge').innerHTML = `COUNT: <strong>${filtered.length}</strong>`;
+
+  filtered.forEach(d => {
+    const lat = mode === 'FIRE' ? d.DAMG_RGN_LAT : d.위도;
+    const lng = mode === 'FIRE' ? d.DAMG_RGN_LOT : d.경도;
+    const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(lat, lng) });
+    kakao.maps.event.addListener(marker, 'click', () => showPanel(d, mode));
+    markers.push(marker);
+  });
+  clusterer.addMarkers(markers);
+}
+
+// 3. 상세 정보 패널 (데이터 변수 모두 포함)
+function showPanel(d, mode) {
+  const title = document.getElementById('p-title');
+  const content = document.getElementById('p-content');
+  const dong = document.getElementById('p-dong');
+  document.getElementById('panel').style.display = 'block';
+
+  if (mode === 'FIRE') {
+    title.textContent = "Fire Incident Case";
+    const ymd = String(d.OCRN_YMD || '');
+    const dateStr = ymd.length === 8 ? `${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}` : ymd;
+    const tm = String(d.OCRN_TM || '000000').padStart(6, '0');
+
+    content.innerHTML = `
+      <div class="info-row"><span class="info-label">DATE / TIME</span><span class="info-value">${dateStr} ${tm.slice(0,2)}:${tm.slice(2,4)}</span></div>
+      <div class="info-row"><span class="info-label">TYPE</span><span class="info-value">${d.FIRE_TYPE_NM || '-'}</span></div>
+      <div class="info-row"><span class="info-label">REASON</span><span class="info-value">${d.IGTN_DMNT_SCLSF_NM || '-'}</span></div>
+      <div class="info-row"><span class="info-label">OBJECT</span><span class="info-value">${d.CMBS_EXPOBJ_SCLSF_NM || '-'}</span></div>
+      <div class="info-row"><span class="info-label">PLACE</span><span class="info-value">${d.FCLT_PLC_LCLSF_NM || ''} > ${d.FCLT_PLC_MCLSF_NM || ''}</span></div>
+    `;
+    dong.textContent = "Yeoksam 1-dong";
+  } else {
+    const typeName = WATER_TYPE_NAMES[String(d.시설유형코드)] || "Infrastructure";
+    title.textContent = typeName;
+    content.innerHTML = `
+      <div class="info-row"><span class="info-label">ID</span><span class="info-value">${d.시설번호}</span></div>
+      <div class="info-row"><span class="info-label">ADDRESS</span><span class="info-value">${d.소재지도로명주소 || '-'}</span></div>
+      <div class="info-row"><span class="info-label">STATION</span><span class="info-value">${d.관할소방서명 || '-'}</span></div>
+    `;
+    dong.textContent = (d.행정동 || "Yeoksam 1-dong").split(' ').pop();
+  }
+}
+</script>
+</body>
+</html>
