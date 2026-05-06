@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>역삼1동 화재 출동 지도</title>
+  <!-- 카카오 API -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer&autoload=false"></script>
+  <!-- CSV 파일 파싱을 위한 PapaParse 라이브러리 추가 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    html,body{width:100%;height:100%;overflow:hidden;}
+    body{font-family:'Malgun Gothic',sans-serif;display:flex;flex-direction:column;}
+
+    #header{
+      background:linear-gradient(135deg,#c0392b,#e74c3c);
+      color:#fff;padding:12px 18px;
+      display:flex;align-items:center;gap:10px;flex-shrink:0;
+    }
+    #header h1{font-size:17px;font-weight:700;}
+    #badge{
+      margin-left:auto;font-size:12px;
+      background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px;
+    }
+    #controls{
+      background:#fff;padding:8px 16px;
+      display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+      border-bottom:1px solid #e8e8e8;flex-shrink:0;
+    }
+    .ctrl{display:flex;align-items:center;gap:6px;font-size:13px;}
+    .ctrl label{font-weight:600;color:#333;}
+    select{border:1px solid #ddd;border-radius:6px;padding:4px 8px;font-size:13px;}
+    #map{flex:1;width:100%;}
+
+    #panel{
+      position:absolute;bottom:28px;right:12px;
+      background:#fff;border-radius:12px;padding:15px;
+      box-shadow:0 4px 20px rgba(0,0,0,.15);
+      font-size:13px;min-width:210px;display:none;z-index:10;
+    }
+    #panel h3{font-size:14px;color:#c0392b;margin-bottom:9px;
+      border-bottom:1px solid #eee;padding-bottom:6px;}
+    .pr{display:flex;justify-content:space-between;margin-bottom:6px;gap:8px;}
+    .pl{color:#999;white-space:nowrap;}
+    .pv{font-weight:600;color:#333;text-align:right;}
+    #panel button{
+      margin-top:8px;width:100%;padding:7px;
+      background:#e74c3c;color:#fff;border:none;border-radius:7px;cursor:pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <span>🔥</span>
+  <h1>역삼1동 화재 출동 현황 지도</h1>
+  <span id="badge">총 <strong>0</strong>건</span>
+</div>
+<div id="controls">
+  <div class="ctrl">
+    <label>화재유형</label>
+    <select id="typeF">
+      <option value="전체">전체</option>
+      <option value="건축/구조물">건축/구조물</option>
+      <option value="기타(쓰레기 화재등)">기타(쓰레기 화재등)</option>
+      <option value="자동차/철도차량">자동차/철도차량</option>
+    </select>
+  </div>
+  <div class="ctrl">
+    <label>연도</label>
+    <select id="yearF">
+      <option value="전체">전체</option>
+      <option value="2017">2017년</option>
+      <option value="2018">2018년</option>
+      <option value="2019">2019년</option>
+      <option value="2020">2020년</option>
+      <option value="2021">2021년</option>
+      <option value="2022">2022년</option>
+      <option value="2023">2023년</option>
+      <option value="2024">2024년</option>
+    </select>
+  </div>
+  <div class="ctrl">
+    <label>클러스터</label>
+    <input type="checkbox" id="clusterT" checked>
+  </div>
+  <div class="ctrl">
+    <label>경계선</label>
+    <input type="checkbox" id="boundaryT" checked>
+  </div>
+</div>
+<div id="map"></div>
+
+<!-- 마커 클릭 시 나타나는 정보 패널 수정 -->
+<div id="panel">
+  <h3>🔥 화재 상세정보</h3>
+  <div class="pr"><span class="pl">발생일시</span><span class="pv" id="p-datetime"></span></div>
+  <div class="pr"><span class="pl">화재유형</span><span class="pv" id="p-type"></span></div>
+  <div class="pr"><span class="pl">발화요인</span><span class="pv" id="p-igtn"></span></div>
+  <div class="pr"><span class="pl">연소확대물</span><span class="pv" id="p-cmbs"></span></div>
+  <div class="pr"><span class="pl">시설장소</span><span class="pv" id="p-fclt"></span></div>
+  <button onclick="document.getElementById('panel').style.display='none'">닫기</button>
+</div>
+
+<script>
+// CSV 데이터를 담을 빈 배열
+let FIRE_DATA = [];
+
+// 수정된 역삼1동 경계선 (정확한 행정동 좌표로 갱신)
+const BOUNDARY = [
+  [127.047178, 37.503974], [127.042767, 37.502621], [127.038398, 37.501282], 
+  [127.037044, 37.500616], [127.038457, 37.497531], [127.040888, 37.492413], 
+  [127.031623, 37.489540], [127.027635, 37.497964], [127.026485, 37.500368], 
+  [127.024495, 37.504518], [127.024470, 37.504571], [127.033887, 37.507392], 
+  [127.043765, 37.510263], [127.044175, 37.509202], [127.044869, 37.508475], 
+  [127.045660, 37.507916], [127.045733, 37.507865], [127.046410, 37.507449], 
+  [127.046874, 37.507163], [127.046988, 37.507093], [127.047278, 37.506908], 
+  [127.047769, 37.506591], [127.048141, 37.506207], [127.048257, 37.505975], 
+  [127.048675, 37.505140], [127.048929, 37.504630], [127.047178, 37.503974]
+];
+
+const COLOR = {
+  '건축/구조물':'#e74c3c',
+  '기타(쓰레기 화재등)':'#f39c12',
+  '자동차/철도차량':'#3498db'
+};
+const VIEW_SW = [37.486, 127.022];
+const VIEW_NE = [37.516, 127.052];
+
+let map, clusterer, boundaryPolygon, boundaryLabel;
+let markers=[], overlays=[];
+
+kakao.maps.load(function() {
+  map = new kakao.maps.Map(document.getElementById('map'), {
+    center: new kakao.maps.LatLng(37.4996, 127.0354),
+    level: 5
+  });
+
+  // 표시 범위 제한
+  var sw = new kakao.maps.LatLng(VIEW_SW[0], VIEW_SW[1]);
+  var ne = new kakao.maps.LatLng(VIEW_NE[0], VIEW_NE[1]);
+  map.setBounds(new kakao.maps.LatLngBounds(sw, ne));
+
+  kakao.maps.event.addListener(map, 'dragend', enforceBounds);
+  kakao.maps.event.addListener(map, 'zoom_changed', function() {
+    if(map.getLevel() > 6) map.setLevel(6);
+    enforceBounds();
+  });
+
+  drawBoundary();
+
+  clusterer = new kakao.maps.MarkerClusterer({
+    map: map, averageCenter: true, minLevel: 4,
+    styles:[{
+      width:'48px',height:'48px',
+      background:'rgba(192,57,43,.88)',borderRadius:'24px',
+      color:'#fff',fontWeight:'bold',fontSize:'13px',
+      lineHeight:'48px',textAlign:'center',
+      border:'3px solid rgba(255,255,255,.7)'
+    }]
+  });
+
+  // 이벤트 리스너 등록
+  document.getElementById('typeF').addEventListener('change', renderMarkers);
+  document.getElementById('yearF').addEventListener('change', renderMarkers);
+  document.getElementById('clusterT').addEventListener('change', renderMarkers);
+  document.getElementById('boundaryT').addEventListener('change', function() {
+    var show = this.checked;
+    if(boundaryPolygon) boundaryPolygon.setMap(show ? map : null);
+    if(boundaryLabel)   boundaryLabel.setMap(show ? map : null);
+  });
+
+  // 깃허브에 업로드된 역삼1동_화재출동.csv 파일을 직접 불러옵니다.
+  Papa.parse("역삼1동_화재출동.csv", {
+    download: true,
+    header: true,
+    dynamicTyping: true,
+    skipEmptyLines: true,
+    complete: function(results) {
+      // 위도, 경도 값이 존재하는 유효한 데이터만 필터링
+      FIRE_DATA = results.data.filter(function(d) { return d.DAMG_RGN_LAT && d.DAMG_RGN_LOT; });
+      renderMarkers();
+    },
+    error: function(err) {
+      console.error("CSV 로드 에러:", err);
+      alert("CSV 파일을 불러오는 데 실패했습니다. 파일 경로를 확인해주세요.");
+    }
+  });
+});
+
+function enforceBounds() {
+  var c   = map.getCenter();
+  var lat = Math.min(Math.max(c.getLat(), VIEW_SW[0]), VIEW_NE[0]);
+  var lng = Math.min(Math.max(c.getLng(), VIEW_SW[1]), VIEW_NE[1]);
+  if(lat !== c.getLat() || lng !== c.getLng())
+    map.setCenter(new kakao.maps.LatLng(lat, lng));
+}
+
+function drawBoundary() {
+  var path = BOUNDARY.map(function(c){ return new kakao.maps.LatLng(c[1],c[0]); });
+  boundaryPolygon = new kakao.maps.Polygon({
+    map: map, path: path,
+    strokeWeight:3, strokeColor:'#2980b9', strokeOpacity:.9, strokeStyle:'solid',
+    fillColor:'#3498db', fillOpacity:.08
+  });
+  boundaryLabel = new kakao.maps.CustomOverlay({
+    map: map,
+    position: new kakao.maps.LatLng(37.4996, 127.0354),
+    content: '<div style="background:rgba(41,128,185,.85);color:#fff;font-size:13px;'
+           + 'font-weight:700;padding:4px 10px;border-radius:12px;'
+           + 'white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2);">역삼1동</div>',
+    yAnchor:.5, xAnchor:.5, zIndex:5
+  });
+}
+
+function renderMarkers() {
+  markers.forEach(function(m){ m.setMap(null); });
+  overlays.forEach(function(o){ o.setMap(null); });
+  markers=[]; overlays=[];
+  if(clusterer) clusterer.clear();
+
+  var type = document.getElementById('typeF').value;
+  var year = document.getElementById('yearF').value;
+  var useCluster = document.getElementById('clusterT').checked;
+
+  var filtered = FIRE_DATA.filter(function(d){
+    var yr = String(d.OCRN_YMD).slice(0,4);
+    return (type==='전체'||d.FIRE_TYPE_NM===type)&&(year==='전체'||yr===year);
+  });
+
+  document.getElementById('badge').innerHTML='총 <strong>'+filtered.length+'</strong>건';
+
+  filtered.forEach(function(d){
+    var pos   = new kakao.maps.LatLng(d.DAMG_RGN_LAT, d.DAMG_RGN_LOT);
+    var color = COLOR[d.FIRE_TYPE_NM]||'#888';
+    if(useCluster){
+      var marker = new kakao.maps.Marker({position:pos});
+      (function(data){
+        kakao.maps.event.addListener(marker,'click',function(){showPanel(data);});
+      })(d);
+      markers.push(marker);
+    }else{
+      var div = document.createElement('div');
+      div.style.cssText='width:14px;height:14px;background:'+color
+        +';border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;';
+      (function(data){ div.addEventListener('click',function(){showPanel(data);}); })(d);
+      var ov = new kakao.maps.CustomOverlay({position:pos,content:div,yAnchor:.5,xAnchor:.5,zIndex:3});
+      ov.setMap(map); overlays.push(ov);
+    }
+  });
+
+  if(useCluster) clusterer.addMarkers(markers);
+}
+
+// 클릭 시 노출되는 정보 패널 상세 로직 수정
+function showPanel(d){
+  // 1. 발생일자 및 발생시각 포맷팅 (YYYY-MM-DD HH:MM:SS)
+  var ymd = String(d.OCRN_YMD || '');
+  var dateStr = ymd.length === 8 ? ymd.slice(0,4) + '-' + ymd.slice(4,6) + '-' + ymd.slice(6,8) : ymd;
+  
+  var timeStr = '-';
+  if (d.OCRN_TM !== null && d.OCRN_TM !== undefined && d.OCRN_TM !== '') {
+    var tm = String(d.OCRN_TM).padStart(6, '0');
+    timeStr = tm.slice(0,2) + ':' + tm.slice(2,4) + ':' + tm.slice(4,6);
+  }
+  
+  document.getElementById('p-datetime').textContent = dateStr + ' ' + timeStr;
+
+  // 2. 화재유형
+  document.getElementById('p-type').textContent = d.FIRE_TYPE_NM || '-';
+
+  // 3. 발화요인 (소분류)
+  document.getElementById('p-igtn').textContent = d.IGTN_DMNT_SCLSF_NM || '-';
+  
+  // 4. 연소확대물 (소분류)
+  document.getElementById('p-cmbs').textContent = d.CMBS_EXPOBJ_SCLSF_NM || '-';
+  
+  // 5. 시설장소 (대분류 - 중분류)
+  var fcltL = d.FCLT_PLC_LCLSF_NM || '';
+  var fcltM = d.FCLT_PLC_MCLSF_NM || '';
+  var fcltStr = (fcltL && fcltM) ? fcltL + ' - ' + fcltM : (fcltL || fcltM || '-');
+  document.getElementById('p-fclt').textContent = fcltStr;
+
+  document.getElementById('panel').style.display='block';
+}
+</script>
+</body>
+</html>
