@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>역삼1동 화재 및 소방시설 분석 지도 (CSV)</title>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer&autoload=false"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    /* CSS 생략 (기존 스타일과 동일) */
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Malgun Gothic',sans-serif;display:flex;flex-direction:column;height:100vh;}
+    #header{background:linear-gradient(135deg,#c0392b,#e74c3c);color:#fff;padding:12px;display:flex;align-items:center;flex-shrink:0;}
+    #controls{background:#fff;padding:10px;display:flex;gap:15px;border-bottom:1px solid #ddd;flex-wrap:wrap;}
+    #map{flex:1;position:relative;}
+    #panel{position:absolute;bottom:20px;right:20px;background:#fff;padding:15px;border-radius:10px;box-shadow:0 4px 15px rgba(0,0,0,0.2);display:none;z-index:10;min-width:220px;}
+    .dong-info{margin-top:10px;padding-top:10px;border-top:1px dashed #ccc;font-weight:bold;color:#2980b9;text-align:right;}
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>역삼1동 화재 및 소방시설 통합 지도</h1>
+  <span id="badge" style="margin-left:auto;">데이터 로딩 중...</span>
+</div>
+
+<div id="controls">
+  <!-- 왼쪽 위: 데이터 유형 및 유형코드 선택 -->
+  <div class="ctrl">
+    <label>데이터 선택</label>
+    <select id="mainMode">
+      <option value="FIRE">🔥 화재 발생 이력</option>
+      <option value="WATER">💧 소방용수시설</option>
+    </select>
+  </div>
+
+  <div id="waterFilters" style="display:none;">
+    <label>시설유형코드</label>
+    <select id="typeFilter">
+      <option value="전체">전체 유형</option>
+      <option value="1">1 (지상식)</option>
+      <option value="2">2 (지하식)</option>
+      <option value="3">3 (급수탑)</option>
+      <option value="4">4 (저수조)</option>
+      <option value="5">5 (비상소화장치)</option>
+    </select>
+  </div>
+
+  <div id="fireFilters">
+    <label>연도</label>
+    <select id="yearFilter">
+      <option value="전체">전체 연도</option>
+      <option value="2024">2024년</option>
+      <option value="2023">2023년</option>
+    </select>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<!-- 정보 패널 (오른쪽 아래) -->
+<div id="panel">
+  <h3 id="p-title">상세 정보</h3>
+  <div id="p-content"></div>
+  <div class="dong-info">행정동: <span id="p-dong">-</span></div>
+  <button style="width:100%;margin-top:10px;" onclick="document.getElementById('panel').style.display='none'">닫기</button>
+</div>
+
+<script>
+let FIRE_DATA = [];
+let WATER_DATA = [];
+let map, clusterer, markers = [];
+
+kakao.maps.load(function() {
+  map = new kakao.maps.Map(document.getElementById('map'), {
+    center: new kakao.maps.LatLng(37.4996, 127.0354),
+    level: 4
+  });
+  clusterer = new kakao.maps.MarkerClusterer({ map: map, averageCenter: true, minLevel: 3 });
+
+  // 2개의 CSV 파일 순차 로드
+  loadCSV("역삼1동_화재출동.csv", (data) => { FIRE_DATA = data; render(); });
+  loadCSV("yeoksam_fire_water.csv", (data) => { WATER_DATA = data; render(); });
+
+  document.getElementById('mainMode').addEventListener('change', function() {
+    const isWater = this.value === 'WATER';
+    document.getElementById('waterFilters').style.display = isWater ? 'inline-block' : 'none';
+    document.getElementById('fireFilters').style.display = isWater ? 'none' : 'inline-block';
+    render();
+  });
+  document.getElementById('typeFilter').addEventListener('change', render);
+  document.getElementById('yearFilter').addEventListener('change', render);
+});
+
+function loadCSV(file, callback) {
+  Papa.parse(file, {
+    download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+    complete: (results) => callback(results.data)
+  });
+}
+
+function render() {
+  const mode = document.getElementById('mainMode').value;
+  clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+
+  let filtered = [];
+  if (mode === 'FIRE') {
+    const year = document.getElementById('yearFilter').value;
+    filtered = FIRE_DATA.filter(d => d.DAMG_RGN_LAT && (year === '전체' || String(d.OCRN_YMD).startsWith(year)));
+  } else {
+    const type = document.getElementById('typeFilter').value;
+    filtered = WATER_DATA.filter(d => d.위도 && (type === '전체' || String(d.시설유형코드) === type));
+  }
+
+  document.getElementById('badge').innerHTML = `총 <strong>${filtered.length}</strong>건`;
+
+  filtered.forEach(d => {
+    const lat = mode === 'FIRE' ? d.DAMG_RGN_LAT : d.위도;
+    const lng = mode === 'FIRE' ? d.DAMG_RGN_LOT : d.경도;
+    const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(lat, lng) });
+    kakao.maps.event.addListener(marker, 'click', () => showPanel(d, mode));
+    markers.push(marker);
+  });
+  clusterer.addMarkers(markers);
+}
+
+function showPanel(d, mode) {
+  const content = document.getElementById('p-content');
+  const dong = document.getElementById('p-dong');
+  document.getElementById('panel').style.display = 'block';
+
+  if (mode === 'FIRE') {
+    document.getElementById('p-title').textContent = "🔥 화재 상세";
+    content.innerHTML = `유형: ${d.FIRE_TYPE_NM}<br>장소: ${d.FCLT_PLC_MCLSF_NM}`;
+    dong.textContent = "역삼1동";
+  } else {
+    document.getElementById('p-title').textContent = "💧 소방시설 상세";
+    content.innerHTML = `번호: ${d.시설번호}<br>주소: ${d.소재지도로명주소}`;
+    // 엑셀의 '행정동' 열 데이터에서 동 이름만 추출하여 표시
+    dong.textContent = (d.행정동 || "역삼1동").split(' ').pop(); 
+  }
+}
+</script>
+</body>
+</html>
