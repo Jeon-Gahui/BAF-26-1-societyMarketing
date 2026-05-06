@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yeoksam-1 Fire & Water Infrastructure Analysis</title>
+  
+  <!-- Inter 폰트를 사용하여 ss01(기하학적 스타일) 모방 -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer,visualization&autoload=false"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <style>
+    :root {
+      --stripe-purple: #533afd;
+      --stripe-purple-hover: #4434d4;
+      --deep-navy: #061b31;
+      --slate: #64748d;
+      --label-color: #273951;
+      --border-color: #e5edf5;
+      --white: #ffffff;
+      /* Stripe Signature Shadow[cite: 1, 6] */
+      --stripe-shadow: rgba(50, 50, 93, 0.25) 0px 50px 100px -20px, rgba(0, 0, 0, 0.3) 0px 30px 60px -30px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--white);
+      color: var(--slate);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      /* Stripe DNA: ss01 enabled */
+      font-feature-settings: "ss01" on, "cv01" on, "cv11" on;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Header: Clean & Luxurious[cite: 1] */
+    #header {
+      background: var(--white);
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      z-index: 20;
+    }
+    #header h1 {
+      color: var(--deep-navy);
+      font-size: 18px;
+      font-weight: 300; /* Whisper-weight authority[cite: 1] */
+      letter-spacing: -0.02em;
+    }
+    #badge {
+      margin-left: 16px;
+      font-size: 11px;
+      background: rgba(83, 58, 253, 0.1);
+      color: var(--stripe-purple);
+      padding: 2px 10px;
+      border-radius: 4px;
+      font-weight: 500;
+      border: 1px solid rgba(83, 58, 253, 0.2);
+    }
+
+    /* Controls: Precision Spacing */
+    #controls {
+      background: var(--white);
+      padding: 12px 32px;
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      z-index: 15;
+    }
+    .ctrl-group { display: flex; align-items: center; gap: 8px; }
+    .ctrl-group label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--label-color);
+    }
+    select {
+      border: 1px solid var(--border-color);
+      background: var(--white);
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 14px;
+      outline: none;
+      color: var(--deep-navy);
+      transition: border-color 0.15s ease;
+    }
+    select:focus { border-color: var(--stripe-purple); }
+
+    #map-wrapper { flex: 1; position: relative; width: 100%; }
+    #map { position: absolute; inset: 0; z-index: 1; }
+
+    /* Info Panel: Floating Sky Depth[cite: 1, 6] */
+    #panel {
+      position: absolute;
+      bottom: 40px;
+      right: 32px;
+      background: var(--white);
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: var(--stripe-shadow);
+      display: none;
+      z-index: 1000;
+      width: 320px;
+      border: 1px solid var(--border-color);
+    }
+    #p-title {
+      font-size: 22px;
+      font-weight: 300; /* Signature headline weight[cite: 3] */
+      color: var(--deep-navy);
+      margin-bottom: 16px;
+      letter-spacing: -0.22px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 14px;
+    }
+    .info-label { color: var(--slate); font-weight: 400; }
+    .info-value { 
+      color: var(--deep-navy); 
+      font-weight: 500;
+      /* Tabular numbers for data[cite: 3] */
+      font-variant-numeric: tabular-nums; 
+      font-feature-settings: "tnum" on;
+    }
+    
+    .dong-info {
+      margin-top: 20px;
+      text-align: right;
+      font-size: 12px;
+      color: var(--stripe-purple);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    
+    .btn-close {
+      width: 100%;
+      padding: 10px;
+      background: var(--stripe-purple);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--white);
+      font-weight: 500;
+      margin-top: 16px;
+      transition: background-color 0.15s ease;
+    }
+    .btn-close:hover { background: var(--stripe-purple-hover); }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>Yeoksam-1 Data Analysis</h1>
+  <span id="badge">Syncing infrastructure...</span>
+</div>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <label>Database</label>
+    <select id="mainMode">
+      <option value="FIRE">Incident Logs (2024)</option>
+      <option value="WATER">Water Supply (2025)</option>
+    </select>
+  </div>
+  <div id="filterSection" class="ctrl-group">
+    <div id="fireFilters">
+      <label>Period</label>
+      <select id="yearFilter">
+        <option value="전체">All Time</option>
+        <option value="2024">2024 FY</option>
+        <option value="2023">2023 FY</option>
+      </select>
+    </div>
+    <div id="waterFilters" style="display:none;">
+      <label>Type Code</label>
+      <select id="typeFilter">
+        <option value="전체">All Types</option>
+        <option value="1">1 (Above-ground)</option>
+        <option value="2">2 (Underground)</option>
+        <option value="3">3 (Water Tower)</option>
+        <option value="4">4 (Cistern)</option>
+        <option value="5">5 (Emergency Kit)</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div id="map-wrapper">
+  <div id="map"></div>
+</div>
+
+<div id="panel">
+  <h3 id="p-title">Detail Analysis</h3>
+  <div id="p-content"></div>
+  <div class="dong-info">Location: <span id="p-dong">-</span></div>
+  <button class="btn-close" onclick="document.getElementById('panel').style.display='none'">Dismiss</button>
+</div>
+
+<script>
+let FIRE_DATA = [], WATER_DATA = [], markers = [], map, clusterer;
+
+const WATER_TYPE_MAP = { "1":"Above-ground Hydrant", "2":"Underground Hydrant", "3":"Water Tower", "4":"Storage Cistern", "5":"Emergency System" };
+
+kakao.maps.load(function() {
+  const container = document.getElementById('map');
+  const options = { center: new kakao.maps.LatLng(37.4996, 127.0354), level: 4 };
+  map = new kakao.maps.Map(container, options);
+  
+  // Custom Clusterer Styling to match Stripe
+  clusterer = new kakao.maps.MarkerClusterer({
+    map: map, averageCenter: true, minLevel: 3,
+    styles: [{
+      width: '40px', height: '40px',
+      background: '#533afd',
+      borderRadius: '4px',
+      color: '#fff',
+      textAlign: 'center',
+      lineHeight: '40px',
+      fontWeight: '500',
+      boxShadow: 'rgba(50, 50, 93, 0.25) 0px 13px 27px -5px'
+    }]
+  });
+
+  loadAllData();
+});
+
+async function loadAllData() {
+  try {
+    Papa.parse("역삼1동_화재출동.csv", {
+      download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+      complete: function(results) {
+        FIRE_DATA = results.data.filter(d => d.DAMG_RGN_LAT && d.DAMG_RGN_LOT);
+        render();
+      }
+    });
+
+    Papa.parse("yeoksam_fire_water.csv", {
+      download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+      complete: function(results) {
+        WATER_DATA = results.data.filter(d => d.위도);
+        render();
+      }
+    });
+  } catch (e) {
+    document.getElementById('badge').textContent = "Data connection failed";
+  }
+}
+
+document.getElementById('mainMode').addEventListener('change', function() {
+  const isWater = this.value === 'WATER';
+  document.getElementById('fireFilters').style.display = isWater ? 'none' : 'block';
+  document.getElementById('waterFilters').style.display = isWater ? 'block' : 'none';
+  render();
+});
+document.getElementById('yearFilter').addEventListener('change', render);
+document.getElementById('typeFilter').addEventListener('change', render);
+
+function render() {
+  if (!map) return;
+  const mode = document.getElementById('mainMode').value;
+  clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+
+  let displayData = (mode === 'FIRE') ? FIRE_DATA : WATER_DATA;
+  
+  displayData.forEach(d => {
+    const lat = mode === 'FIRE' ? d.DAMG_RGN_LAT : d.위도;
+    const lng = mode === 'FIRE' ? d.DAMG_RGN_LOT : d.경도;
+    const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(lat, lng) });
+    
+    kakao.maps.event.addListener(marker, 'click', () => {
+      document.getElementById('panel').style.display = 'block';
+      const pContent = document.getElementById('p-content');
+      const pTitle = document.getElementById('p-title');
+      const pDong = document.getElementById('p-dong');
+
+      if (mode === 'FIRE') {
+        pTitle.innerHTML = "Incident Report";
+        pContent.innerHTML = `<div class="info-row"><span class="info-label">Date</span><span class="info-value">${d.OCRN_YMD}</span></div>
+                              <div class="info-row"><span class="info-label">Type</span><span class="info-value">${d.FIRE_TYPE_NM}</span></div>
+                              <div class="info-row"><span class="info-label">Context</span><span class="info-value">${d.FCLT_PLC_MCLSF_NM}</span></div>`;
+        pDong.textContent = "Yeoksam 1-dong";
+      } else {
+        const typeName = WATER_TYPE_MAP[String(d.시설유형코드)] || "Facility";
+        pTitle.innerHTML = typeName;
+        pContent.innerHTML = `<div class="info-row"><span class="info-label">Asset ID</span><span class="info-value">${d.시설번호}</span></div>
+                              <div class="info-row"><span class="info-label">Address</span><span class="info-value">${d.소재지도로명주소}</span></div>`;
+        pDong.textContent = (d.행정동 || "Yeoksam 1-dong").split(' ').pop();
+      }
+    });
+    markers.push(marker);
+  });
+  clusterer.addMarkers(markers);
+  document.getElementById('badge').innerHTML = `${displayData.length} records active`;
+}
+</script>
+</body>
+</html>
