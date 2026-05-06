@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>역삼1동 데이터 분석 지도</title>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer&autoload=false"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Malgun Gothic',sans-serif;display:flex;flex-direction:column;height:100vh;background:#f8f9fa;}
+    
+    /* 헤더 스타일 수정: 배경색 및 제목 제거 */
+    #header{padding:10px 20px;display:flex;justify-content:flex-end;align-items:center;background:transparent;position:absolute;top:0;right:0;z-index:20;width:100%;pointer-events:none;}
+    #badge{background:rgba(0,0,0,0.6);color:#fff;padding:5px 12px;border-radius:20px;font-size:12px;pointer-events:auto;}
+
+    /* 컨트롤러 위치 및 스타일 */
+    #controls{background:#fff;padding:12px 20px;display:flex;gap:15px;border-bottom:1px solid #eee;z-index:15;box-shadow:0 2px 5px rgba(0,0,0,0.05);}
+    .ctrl{display:flex;align-items:center;gap:8px;font-size:13px;}
+    .ctrl label{font-weight:600;color:#555;}
+    select{border:1px solid #ddd;border-radius:6px;padding:5px 8px;font-size:13px;outline:none;background:#fff;}
+
+    #map{flex:1;width:100%;z-index:1;}
+
+    /* 정보 패널 (오른쪽 아래) */
+    #panel{position:absolute;bottom:30px;right:20px;background:#fff;padding:20px;border-radius:15px;box-shadow:0 10px 30px rgba(0,0,0,0.15);display:none;z-index:10;min-width:260px;border:1px solid #f0f0f0;}
+    #p-title{font-size:16px;font-weight:bold;margin-bottom:12px;color:#c0392b;display:flex;align-items:center;gap:6px;}
+    #p-content{line-height:1.6;color:#444;font-size:13.5px;margin-bottom:15px;}
+    .dong-info{padding-top:12px;border-top:1px dashed #eee;font-weight:bold;color:#2980b9;text-align:right;font-size:13px;}
+    
+    .btn-close{width:100%;padding:8px;background:#f1f1f1;border:none;border-radius:8px;cursor:pointer;color:#666;font-weight:600;transition:0.2s;}
+    .btn-close:hover{background:#e5e5e5;}
+  </style>
+</head>
+<body>
+
+<!-- 제목 제거 및 뱃지만 유지 -->
+<div id="header">
+  <span id="badge">데이터 로딩 중...</span>
+</div>
+
+<div id="controls">
+  <div class="ctrl">
+    <label>데이터</label>
+    <select id="mainMode">
+      <option value="FIRE">🔥 화재 발생</option>
+      <option value="WATER">💧 소방용수시설</option>
+    </select>
+  </div>
+
+  <div id="waterFilters" style="display:none;">
+    <label>시설유형</label>
+    <select id="typeFilter">
+      <option value="전체">전체 유형</option>
+      <option value="1">지상식 소화전</option>
+      <option value="2">지하식 소화전</option>
+      <option value="3">급수탑</option>
+      <option value="4">저수조</option>
+      <option value="5">비상소화장치</option>
+    </select>
+  </div>
+
+  <div id="fireFilters">
+    <label>연도</label>
+    <select id="yearFilter">
+      <option value="전체">전체 연도</option>
+      <option value="2024">2024년</option>
+      <option value="2023">2023년</option>
+    </select>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<div id="panel">
+  <h3 id="p-title">상세 정보</h3>
+  <div id="p-content"></div>
+  <div class="dong-info">행정동: <span id="p-dong">-</span></div>
+  <button class="btn-close" onclick="document.getElementById('panel').style.display='none'">닫기</button>
+</div>
+
+<script>
+let FIRE_DATA = [];
+let WATER_DATA = [];
+let map, clusterer, markers = [];
+
+// 시설 유형 코드 매핑 테이블
+const WATER_TYPE_NAMES = {
+  "1": "지상식 소화전",
+  "2": "지하식 소화전",
+  "3": "급수탑",
+  "4": "저수조",
+  "5": "비상소화장치"
+};
+
+kakao.maps.load(function() {
+  map = new kakao.maps.Map(document.getElementById('map'), {
+    center: new kakao.maps.LatLng(37.4996, 127.0354),
+    level: 4
+  });
+  clusterer = new kakao.maps.MarkerClusterer({ map: map, averageCenter: true, minLevel: 3 });
+
+  loadCSV("역삼1동_화재출동.csv", (data) => { FIRE_DATA = data; render(); });
+  loadCSV("yeoksam_fire_water.csv", (data) => { WATER_DATA = data; render(); });
+
+  document.getElementById('mainMode').addEventListener('change', function() {
+    const isWater = this.value === 'WATER';
+    document.getElementById('waterFilters').style.display = isWater ? 'flex' : 'none';
+    document.getElementById('fireFilters').style.display = isWater ? 'none' : 'flex';
+    render();
+  });
+  document.getElementById('typeFilter').addEventListener('change', render);
+  document.getElementById('yearFilter').addEventListener('change', render);
+});
+
+function loadCSV(file, callback) {
+  Papa.parse(file, {
+    download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+    complete: (results) => callback(results.data)
+  });
+}
+
+function render() {
+  const mode = document.getElementById('mainMode').value;
+  clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+
+  let filtered = [];
+  if (mode === 'FIRE') {
+    const year = document.getElementById('yearFilter').value;
+    filtered = FIRE_DATA.filter(d => d.DAMG_RGN_LAT && (year === '전체' || String(d.OCRN_YMD).startsWith(year)));
+  } else {
+    const type = document.getElementById('typeFilter').value;
+    filtered = WATER_DATA.filter(d => d.위도 && (type === '전체' || String(d.시설유형코드) === type));
+  }
+
+  document.getElementById('badge').innerHTML = `현재 필터 데이터: <strong>${filtered.length}</strong>건`;
+
+  filtered.forEach(d => {
+    const lat = mode === 'FIRE' ? d.DAMG_RGN_LAT : d.위도;
+    const lng = mode === 'FIRE' ? d.DAMG_RGN_LOT : d.경도;
+    const marker = new kakao.maps.Marker({ position: new kakao.maps.LatLng(lat, lng) });
+    kakao.maps.event.addListener(marker, 'click', () => showPanel(d, mode));
+    markers.push(marker);
+  });
+  clusterer.addMarkers(markers);
+}
+
+function showPanel(d, mode) {
+  const title = document.getElementById('p-title');
+  const content = document.getElementById('p-content');
+  const dong = document.getElementById('p-dong');
+  document.getElementById('panel').style.display = 'block';
+
+  if (mode === 'FIRE') {
+    title.innerHTML = `<span>🔥</span> 화재 상세`;
+    content.innerHTML = `<b>화재유형</b>: ${d.FIRE_TYPE_NM}<br><b>장소분류</b>: ${d.FCLT_PLC_MCLSF_NM}`;
+    dong.textContent = "역삼1동";
+  } else {
+    // 시설유형코드에 따른 이름 매핑 적용
+    const typeName = WATER_TYPE_NAMES[String(d.시설유형코드)] || "소방시설 상세";
+    title.innerHTML = `<span>💧</span> ${typeName}`;
+    content.innerHTML = `<b>관리번호</b>: ${d.시설번호}<br><b>주소</b>: ${d.소재지도로명주소}`;
+    dong.textContent = (d.행정동 || "역삼1동").split(' ').pop(); 
+  }
+}
+</script>
+</body>
+</html>
