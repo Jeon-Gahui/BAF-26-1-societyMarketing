@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>역삼1동 화재 데이터 분석 지도</title>
+  <!-- 카카오 API: clusterer와 visualization(열지도) 라이브러리 추가 -->
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_JS_KEY&libraries=clusterer,visualization&autoload=false"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    html,body{width:100%;height:100%;overflow:hidden;}
+    body{font-family:'Malgun Gothic',sans-serif;display:flex;flex-direction:column;}
+
+    #header{
+      background:linear-gradient(135deg,#c0392b,#e74c3c);
+      color:#fff;padding:12px 18px;
+      display:flex;align-items:center;gap:10px;flex-shrink:0;
+    }
+    #header h1{font-size:17px;font-weight:700;}
+    #badge{
+      margin-left:auto;font-size:12px;
+      background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px;
+    }
+    #controls{
+      background:#fff;padding:8px 16px;
+      display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+      border-bottom:1px solid #e8e8e8;flex-shrink:0;
+    }
+    .ctrl{display:flex;align-items:center;gap:6px;font-size:13px;}
+    .ctrl label{font-weight:600;color:#333;}
+    select{border:1px solid #ddd;border-radius:6px;padding:4px 8px;font-size:13px;}
+    #map{flex:1;width:100%;}
+
+    #panel{
+      position:absolute;bottom:28px;right:12px;
+      background:#fff;border-radius:12px;padding:15px;
+      box-shadow:0 4px 20px rgba(0,0,0,.15);
+      font-size:13px;min-width:210px;display:none;z-index:10;
+    }
+    #panel h3{font-size:14px;color:#c0392b;margin-bottom:9px;
+      border-bottom:1px solid #eee;padding-bottom:6px;}
+    .pr{display:flex;justify-content:space-between;margin-bottom:6px;gap:8px;}
+    .pl{color:#999;white-space:nowrap;}
+    .pv{font-weight:600;color:#333;text-align:right;}
+    #panel button{
+      margin-top:8px;width:100%;padding:7px;
+      background:#e74c3c;color:#fff;border:none;border-radius:7px;cursor:pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <span>🔥</span>
+  <h1>역삼1동 화재 다량 발생 지역 분석</h1>
+  <span id="badge">총 <strong>0</strong>건</span>
+</div>
+
+<div id="controls">
+  <div class="ctrl">
+    <label>연도</label>
+    <select id="yearF">
+      <option value="전체">전체</option>
+      <option value="2024">2024년</option>
+      <option value="2023">2023년</option>
+      <option value="2022">2022년</option>
+      <option value="2021">2021년</option>
+      <option value="2020">2020년</option>
+    </select>
+  </div>
+  <!-- 시각화 방식 선택 추가 -->
+  <div class="ctrl">
+    <label>열지도(밀도)</label>
+    <input type="checkbox" id="heatmapT">
+  </div>
+  <div class="ctrl">
+    <label>클러스터</label>
+    <input type="checkbox" id="clusterT" checked>
+  </div>
+  <div class="ctrl">
+    <label>경계선</label>
+    <input type="checkbox" id="boundaryT" checked>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<div id="panel">
+  <h3>🔥 화재 상세정보</h3>
+  <div class="pr"><span class="pl">발생일시</span><span class="pv" id="p-datetime"></span></div>
+  <div class="pr"><span class="pl">화재유형</span><span class="pv" id="p-type"></span></div>
+  <div class="pr"><span class="pl">발화요인</span><span class="pv" id="p-igtn"></span></div>
+  <div class="pr"><span class="pl">연소확대물</span><span class="pv" id="p-cmbs"></span></div>
+  <div class="pr"><span class="pl">시설장소</span><span class="pv" id="p-fclt"></span></div>
+  <button onclick="document.getElementById('panel').style.display='none'">닫기</button>
+</div>
+
+<script>
+let FIRE_DATA = [];
+const BOUNDARY = [[127.047178,37.503974],[127.042767,37.502622],[127.038399,37.501282],[127.037044,37.500616],[127.038457,37.497532],[127.040888,37.492414],[127.031623,37.48954],[127.027635,37.497964],[127.026486,37.500369],[127.024496,37.504518],[127.02447,37.504572],[127.033887,37.507392],[127.043766,37.510263],[127.044176,37.509202],[127.04487,37.508475],[127.045661,37.507916],[127.045733,37.507866],[127.046411,37.507449],[127.046875,37.507164],[127.046989,37.507093],[127.047279,37.506908],[127.04777,37.506591],[127.048141,37.506207],[127.048257,37.505976],[127.048675,37.50514],[127.04893,37.504631],[127.047178,37.503974]];
+
+let map, clusterer, heatmap, boundaryPolygon;
+let markers = [];
+
+kakao.maps.load(function() {
+  map = new kakao.maps.Map(document.getElementById('map'), {
+    center: new kakao.maps.LatLng(37.4996, 127.0354),
+    level: 4
+  });
+
+  clusterer = new kakao.maps.MarkerClusterer({
+    map: map, averageCenter: true, minLevel: 3
+  });
+
+  // 열지도 초기화
+  heatmap = new kakao.maps.visualization.Heatmap({
+    map: map,
+    radius: 30, // 영향 반경
+    opacity: 0.7
+  });
+
+  drawBoundary();
+  loadCSV();
+
+  document.getElementById('yearF').addEventListener('change', render);
+  document.getElementById('heatmapT').addEventListener('change', render);
+  document.getElementById('clusterT').addEventListener('change', render);
+  document.getElementById('boundaryT').addEventListener('change', function() {
+    boundaryPolygon.setMap(this.checked ? map : null);
+  });
+});
+
+function loadCSV() {
+  Papa.parse("역삼1동_화재출동.csv", {
+    download: true, header: true, dynamicTyping: true, skipEmptyLines: true,
+    complete: function(results) {
+      FIRE_DATA = results.data.filter(d => d.DAMG_RGN_LAT && d.DAMG_RGN_LOT);
+      render();
+    }
+  });
+}
+
+function drawBoundary() {
+  var path = BOUNDARY.map(c => new kakao.maps.LatLng(c[1], c[0]));
+  boundaryPolygon = new kakao.maps.Polygon({
+    map: map, path: path, strokeWeight: 3, strokeColor: '#2980b9', strokeOpacity: 0.8,
+    fillColor: '#3498db', fillOpacity: 0.05
+  });
+}
+
+function render() {
+  const year = document.getElementById('yearF').value;
+  const showHeatmap = document.getElementById('heatmapT').checked;
+  const showCluster = document.getElementById('clusterT').checked;
+
+  const filtered = FIRE_DATA.filter(d => year === '전체' || String(d.OCRN_YMD).startsWith(year));
+  document.getElementById('badge').innerHTML = `총 <strong>${filtered.length}</strong>건`;
+
+  // 1. 열지도 데이터 갱신
+  if (showHeatmap) {
+    const data = filtered.map(d => ({ lat: d.DAMG_RGN_LAT, lng: d.DAMG_RGN_LOT, weight: 1 }));
+    heatmap.setData(data);
+    heatmap.setMap(map);
+  } else {
+    heatmap.setMap(null);
+  }
+
+  // 2. 클러스터 및 마커 갱신
+  clusterer.clear();
+  markers.forEach(m => m.setMap(null));
+  markers = [];
+
+  if (showCluster) {
+    filtered.forEach(d => {
+      const marker = new kakao.maps.Marker({
+        position: new kakao.maps.LatLng(d.DAMG_RGN_LAT, d.DAMG_RGN_LOT)
+      });
+      kakao.maps.event.addListener(marker, 'click', () => showPanel(d));
+      markers.push(marker);
+    });
+    clusterer.addMarkers(markers);
+  }
+}
+
+function showPanel(d) {
+  const ymd = String(d.OCRN_YMD);
+  const tm = String(d.OCRN_TM || '000000').padStart(6, '0');
+  document.getElementById('p-datetime').textContent = `${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)} ${tm.slice(0,2)}:${tm.slice(2,4)}`;
+  document.getElementById('p-type').textContent = d.FIRE_TYPE_NM || '-';
+  document.getElementById('p-igtn').textContent = d.IGTN_DMNT_SCLSF_NM || '-';
+  document.getElementById('p-cmbs').textContent = d.CMBS_EXPOBJ_SCLSF_NM || '-';
+  document.getElementById('p-fclt').textContent = `${d.FCLT_PLC_LCLSF_NM || ''} - ${d.FCLT_PLC_MCLSF_NM || ''}`;
+  document.getElementById('panel').style.display = 'block';
+}
+</script>
+</body>
+</html>
